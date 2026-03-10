@@ -1,6 +1,6 @@
 {
   "name": "duoduo-in-obsidian",
-  "version": "0.1.0",
+  "version": "0.1.1",
   "description": "Native agent chat interface for Obsidian, powered by duoduo daemon.",
   "main": "main.js",
   "scripts": {
@@ -9,7 +9,12 @@
     "sync-version": "node scripts/sync-version.mjs",
     "version": "npm run sync-version && git add manifest.json"
   },
-  "keywords": ["obsidian", "agent", "chat", "duoduo"],
+  "keywords": [
+    "obsidian",
+    "agent",
+    "chat",
+    "duoduo"
+  ],
   "author": "kuaner",
   "license": "MIT",
   "repository": {
