@@ -111,9 +111,25 @@ src/
 ## 开发
 
 ```bash
-bun install
-bun run dev     # 监听模式，自动重新构建
-bun run build   # 生产构建
+npm install
+npm run dev     # 监听模式，文件变化时自动重新构建
+npm run build   # 生产构建
 ```
 
-构建产物 `main.js` 放入 Obsidian vault 的插件目录即可加载。
+构建完成后，`dist/` 目录包含插件所需的全部文件：
+
+```
+dist/
+├── main.js        # 打包后的插件代码
+├── manifest.json  # 插件元数据
+└── styles.css     # 样式
+```
+
+将 `dist/` 目录下的三个文件复制到 Obsidian vault 的插件目录即可：
+
+```
+{your-vault}/.obsidian/plugins/duoduo-in-obsidian/
+├── main.js
+├── manifest.json
+└── styles.css
+```

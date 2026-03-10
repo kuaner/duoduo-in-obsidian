@@ -4,8 +4,8 @@
   "description": "Native agent chat interface for Obsidian, powered by duoduo daemon.",
   "main": "main.js",
   "scripts": {
-    "build": "bun run esbuild.config.mjs",
-    "dev": "bun run esbuild.config.mjs --watch"
+    "dev": "node esbuild.config.mjs",
+    "build": "node esbuild.config.mjs production"
   },
   "keywords": ["obsidian", "agent", "chat", "duoduo"],
   "author": "kuaner",
