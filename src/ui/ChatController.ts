@@ -1,10 +1,18 @@
 import { MarkdownView } from "obsidian";
+import { createHash } from "crypto";
 import type { OutboxRecord, SessionExecutionEvent } from "@openduo/protocol";
 import type { PluginSettings, ChatMessage } from "../types";
 import { AgentClient } from "../agent";
 import { formatMessageBlock, formatToolUse } from "../markdown";
 import { EditorInputBar } from "./EditorInputBar";
 import { EditorAdapter } from "./EditorAdapter";
+
+// 基于 notePath 的 MD5 生成符合 [A-Za-z0-9_-]{1,128} 的 channel_id
+function makeChannelId(notePath: string): string {
+  const raw = notePath && notePath.length > 0 ? notePath : "untitled";
+  const md5 = createHash("md5").update(raw).digest("hex"); // 32 个 [0-9a-f]
+  return `md5${md5}`; // 前缀 + 32 位 hex，总长 35，符合约束
+}
 
 /**
  * 控制层：协调 EditorInputBar（UI）、EditorAdapter（编辑器）、AgentClient（通信）。
@@ -62,11 +70,12 @@ export class ChatController {
     this.view = view;
 
     const filePath = view.file?.path ?? "untitled";
-    // per-note session key：基础 sessionKey + 笔记路径
+    // per-note session key：obsidian:md5{notePath}
     this.client.setSessionKeyForNote(filePath);
-    // channel_id / consumer_id 以笔记路径为唯一标识，实现每个笔记独立会话
-    const channelKey = `obsidian:${filePath}`;
-    this.client.setChannel(channelKey, `consumer:${channelKey}`);
+    // channel_id / consumer_id 使用清洗后的 notePath，满足 [A-Za-z0-9_-]{1,128}
+    const channelId = makeChannelId(filePath);
+    const consumerId = `${channelId}_consumer`;
+    this.client.setChannel(channelId, consumerId);
 
     this.adapter = new EditorAdapter(view);
 

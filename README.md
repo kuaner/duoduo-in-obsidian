@@ -1,133 +1,234 @@
 # duoduo-in-obsidian
 
-让 Obsidian 成为 duoduo agent 的原生对话界面。对话直接写入当前 Markdown 笔记，与笔记内容融为一体。
+An Obsidian plugin that turns any markdown note into a first-class chat surface for a duoduo agent (Claude behind the scenes).  
+Conversations are stored directly in the current note as readable Markdown, with proper streaming and per-note isolation.
 
-## 设计思路
+> For a Chinese version of this document, see `README.zh-CN.md`.
 
-大多数 AI 插件把对话放在独立的侧边栏，这意味着你的对话和笔记是两个世界。
+---
 
-这个插件反过来：**对话就是笔记**。每条消息直接写入当前打开的 `.md` 文件，用普通 Markdown 记录，随时可以编辑、引用、搜索。
+## Features
 
-### 消息格式
+- **Inline chat in notes**
+  - Persistent input bar at the bottom of every `MarkdownView`
+  - Messages are appended to the open `.md` file instead of a side panel
+  - You can edit, search, refactor, and share chats like any other note
 
-采用 HR 分隔格式，源码和渲染视图都保持干净：
+- **Lightweight, readable message format**
+  - **User messages** are blockquotes:
+
+    ```markdown
+    > **You** · 10:05
+    >
+    > Help me write a debounce function.
+    ```
+
+  - **Assistant messages** are plain paragraphs:
+
+    ```markdown
+    **Agent** · 10:05
+
+    Here's a TypeScript implementation:
+    ```
+
+  - **Tool usage / thoughts** are appended as italic paragraphs, e.g.
+
+    ```markdown
+    _🔧 Using tool: web_search("obsidian plugin api")_
+    ```
+
+  No callouts, no custom syntax – just normal Markdown that still looks good in preview.
+
+- **Streaming that actually feels real-time**
+  - Uses `@openduo/protocol` and `channel.pull` streaming records
+  - `EditorAdapter` only appends/overwrites the assistant body, never rewrites the whole file
+  - Rendering is throttled with `requestAnimationFrame` to avoid UI jank
+
+- **Per-note sessions by default**
+  - Every note gets its **own** `session_key`:
+    - `session_key = obsidian:md5{notePath}`
+  - Every note also gets its own channel and consumer:
+    - `channel_id = md5{notePath}`
+    - `consumer_id = md5{notePath}_consumer`
+  - You do **not** configure any Session Key manually; the plugin handles it.
+
+- **Modern, IME-friendly input bar**
+  - Textarea with `Enter` to send, `Shift+Enter` for newline
+  - Composition events (`compositionstart` / `compositionend`) ensure
+    pressing Enter in Chinese IME does **not** accidentally send
+  - 44×44 send button for touch friendliness, proper `:focus-visible`
+  - Status row with a connection dot:
+    - grey blinking: checking
+    - green: connected
+    - orange pulsing: processing
+    - red: disconnected / error
+
+---
+
+## Architecture
+
+High-level pieces:
+
+- `ChatController`
+  - Orchestrates everything
+  - Wires user input → `AgentClient` → editor streaming
+  - Derives per-note `session_key` / `channel_id` from `view.file.path`
+
+- `EditorInputBar`
+  - Pure UI component at the bottom of the `MarkdownView`
+  - Handles textarea, send button, status dot and text
+  - Exposes callbacks like `onSend(text)` and methods like `setStatus`, `setConnectionStatus`
+
+- `EditorAdapter`
+  - Encapsulates all `MarkdownView.editor` writes
+  - Knows where the assistant body starts (`streamingBodyLine`)
+  - Provides:
+    - `insertHeader()` – inserts `**Agent** · HH:mm` + blank line
+    - `updateBody(text)` – throttled streaming updates
+    - `finalizeBody(text)` – final content once streaming ends
+    - `appendUserBlock(block)` – appends formatted user message
+    - `appendLine(line)` – used for tool events
+
+- `AgentClient`
+  - Thin JSON-RPC client over Obsidian’s `requestUrl`
+  - Implements:
+    - `channel.ingress` to send user text
+    - `channel.pull` with `return_mask = ["final","stream","tool"]`
+    - `channel.ack` for cursor advancement
+  - Normalizes outbound events into callbacks:
+    - `onStreamStart`, `onMessage`, `onStreamEnd`, `onToolUse`, `onError`
+
+- `markdown/ChatParser.ts`
+  - Formats and parses the blockquote/plaintext chat format
+  - `formatMessageBlock`, `formatStreamStart`, `formatToolUse`
+
+---
+
+## Message format details
+
+### User messages (blockquote)
 
 ```markdown
----
-**You** · 10:05
+> **You** · 10:05
+>
+> First line of the message
+> Second line of the message
+```
 
-帮我写一个防抖函数
+- `ChatController` builds a `ChatMessage` and uses `formatMessageBlock` to
+  generate this block.
+- `EditorAdapter.appendUserBlock()` appends it at the end of the file,
+  inserting blank lines if needed.
 
----
+### Assistant messages (plain paragraphs)
+
+During streaming:
+
+```markdown
 **Agent** · 10:05
 
-好的，这是一个 TypeScript 实现：
-
-\`\`\`typescript
-function debounce<T extends (...args: unknown[]) => void>(fn: T, delay: number): T {
-  let timer: ReturnType<typeof setTimeout>;
-  return ((...args) => {
-    clearTimeout(timer);
-    timer = setTimeout(() => fn(...args), delay);
-  }) as T;
-}
-\`\`\`
+Partial text▋
 ```
 
-选择这个格式而不是 Callout (`> [!agent]`) 的原因：
+After completion:
 
-- **源码无噪音**：多行回复不需要每行都加 `> ` 前缀
-- **streaming 稳定**：流式输出是 append-only，不需要全文扫描重写，彻底消除跳动
-- **笔记可读**：文件可以直接分享或迁移，无需了解特殊语法
+```markdown
+**Agent** · 10:05
 
-## 架构
-
-```
-┌─────────────────────────────────────────┐
-│  Obsidian Markdown 视图                  │
-│                                         │
-│  # 我的笔记                              │
-│                                         │
-│  ---                                    │
-│  **You** · 10:05                        │
-│                                         │
-│  帮我写一个防抖函数                       │
-│                                         │
-│  ---                                    │
-│  **Agent** · 10:05                      │
-│                                         │
-│  好的，这是一个实现...                    │
-│                                         │
-├─────────────────────────────────────────┤
-│  [与 Agent 对话... (Enter 发送)]   [发送] │  ← EditorInputBar
-├─────────────────────────────────────────┤
-│  状态: 就绪                              │
-└─────────────────────────────────────────┘
+Full assistant response here.
 ```
 
-## 前置条件
+The trailing block cursor `▋` is only present while streaming, then removed
+when `onStreamEnd` fires.
 
-- **duoduo daemon** 在本地运行（默认 `http://127.0.0.1:20233`）
-- **Session Key**：格式为 `lark:oc_xxx:ou_xxx`，在插件设置中填写
+### Tool events
 
-## 使用
+Tool-related events (thoughts, tool calls, tool results) from
+`SessionExecutionEvent` are formatted into short, italic lines and appended at
+the end of the file. Example:
 
-1. 打开任意 Markdown 文件，底部会出现输入栏
-2. 输入消息，按 `Enter` 发送（`Shift+Enter` 换行）
-3. 回复以流式方式实时写入当前文件
-4. 通过命令面板执行 `Create new chat note` 可快速新建对话笔记
-
-## 文件结构
-
-```
-src/
-├── main.ts                 # 插件入口，注册命令和事件
-├── agent/
-│   └── AgentClient.ts      # JSON-RPC 客户端，requestUrl + pull 轮询
-├── ui/
-│   └── EditorInputBar.ts   # 编辑器底部常驻输入栏
-├── markdown/
-│   ├── ChatParser.ts       # 消息格式化与解析（HR 格式）
-│   └── ChatUpdater.ts      # Vault 文件操作
-└── types/
-    ├── chat.ts             # 聊天领域类型
-    └── protocol.ts         # JSON-RPC 协议类型
+```markdown
+_💭 Thinking: analyze current note structure..._
+_🔧 Using tool: search_notes("debounce")_
+_✅ Tool result: found 3 related notes._
 ```
 
-## 通信流程
+---
 
-```
-用户输入 → EditorInputBar → AgentClient.channel.ingress
-                                        ↓
-                                duoduo daemon
-                                        ↓
-                           AgentClient.channel.pull（长轮询）
-                                        ↓
-                     onStreamStart → 插入 HR header（记录 body 起始行）
-                     onMessage    → append-only 更新 body
-                     onStreamEnd  → 移除光标符，恢复就绪状态
+## Requirements
+
+- A **duoduo daemon** running locally (default `http://127.0.0.1:20233`)
+- The daemon must implement:
+  - `channel.ingress`
+  - `channel.pull`
+  - `channel.ack`
+  - `/healthz` for a simple HTTP 200 health check
+- The `@openduo/protocol` npm package is used for all protocol types.
+
+---
+
+## Settings
+
+In Obsidian’s plugin settings you can configure:
+
+- **Daemon URL**
+  - Default: `http://127.0.0.1:20233`
+- **Source Kind**
+  - Arbitrary string identifying this client, default `"obsidian"`
+- **Default Note Folder**
+  - Where `Create new chat note` will create notes
+- **Advanced**
+  - **Pull interval (ms)** – delay between `channel.pull` polls (default 50)
+  - **Pull wait (ms)** – long-poll wait on the daemon side (default 0)
+
+There is **no Session Key field** – all session and channel identifiers are
+derived automatically from the note path.
+
+---
+
+## Communication flow
+
+```text
+User types in EditorInputBar
+           ↓
+ChatController.handleSend(text)
+  - append user block to editor via EditorAdapter
+  - call AgentClient.sendMessage(text)
+           ↓
+AgentClient.channel.ingress
+           ↓
+duoduo daemon
+           ↓
+AgentClient.channel.pull (long polling)
+           ↓
+onStreamStart  → EditorAdapter.insertHeader()
+onMessage      → EditorAdapter.updateBody(accumulatedText)
+onStreamEnd    → EditorAdapter.finalizeBody(finalText)
+onToolUse      → EditorAdapter.appendLine(formatToolUse(event))
 ```
 
-## 开发
+---
+
+## Development
 
 ```bash
 npm install
-npm run dev     # 监听模式，文件变化时自动重新构建
-npm run build   # 生产构建
+npm run dev     # watch mode, rebuild on changes
+npm run build   # production build into dist/
 ```
 
-构建完成后，`dist/` 目录包含插件所需的全部文件：
+After `npm run build`, you’ll get:
 
-```
+```text
 dist/
-├── main.js        # 打包后的插件代码
-├── manifest.json  # 插件元数据
-└── styles.css     # 样式
+├── main.js        # bundled plugin code
+├── manifest.json  # plugin manifest
+└── styles.css     # plugin styles
 ```
 
-将 `dist/` 目录下的三个文件复制到 Obsidian vault 的插件目录即可：
+Copy these three files into your vault’s plugin folder:
 
-```
+```text
 {your-vault}/.obsidian/plugins/duoduo-in-obsidian/
 ├── main.js
 ├── manifest.json
