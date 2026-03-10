@@ -9,6 +9,8 @@ Conversations are stored directly in the current note as readable Markdown, with
 
 ## Features
 
+![duoduo in Obsidian screenshot](assets/screenshot.png)
+
 - **Inline chat in notes**
   - Persistent input bar at the bottom of every `MarkdownView`
   - Messages are appended to the open `.md` file instead of a side panel

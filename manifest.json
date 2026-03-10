@@ -1,10 +1,10 @@
 {
-	"id": "obsidian-agent-chat",
-	"name": "Agent Chat",
-	"version": "0.1.0",
-	"minAppVersion": "1.0.0",
-	"description": "ChatGPT-style interface for local agents with Markdown persistence",
-	"author": "kuaner",
-	"authorUrl": "https://github.com/kuaner",
-	"isDesktopOnly": false
+  "id": "duoduo-in-obsidian",
+  "name": "duoduo in Obsidian",
+  "version": "0.1.0",
+  "minAppVersion": "1.0.0",
+  "description": "Streamed duoduo agent chat directly inside Obsidian notes, with per-note sessions and Markdown-native formatting.",
+  "author": "kuaner",
+  "authorUrl": "https://github.com/kuaner",
+  "isDesktopOnly": false
 }
