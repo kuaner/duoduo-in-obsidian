@@ -37,8 +37,8 @@ export class EditorInputBar {
       onStreamStart: () => {
         this.insertStreamingCallout();
       },
-      onStreamEnd: (finalText: string) => {
-        this.finalizeStreamingCallout(finalText);
+      onStreamEnd: (finalText: string, hadStreamChunks: boolean) => {
+        this.finalizeStreamingCallout(finalText, hadStreamChunks);
       },
       onToolUse: (event: SessionExecutionEvent) => {
         this.handleToolUse(event);
@@ -248,17 +248,12 @@ export class EditorInputBar {
       const latestText = this.pendingText;
       this.pendingText = null;
       if (latestText === null || !this.attachedView || this.streamingBodyLine < 0) return;
-
-      const editor = this.attachedView.editor;
-      const currentLineCount = editor.lineCount();
-      const startPos = { line: this.streamingBodyLine, ch: 0 };
-      const endPos = { line: currentLineCount - 1, ch: editor.getLine(currentLineCount - 1).length };
-      editor.replaceRange(latestText + "▋", startPos, endPos);
+      this.writeBodyText(latestText + "▋");
     });
   }
 
-  private finalizeStreamingCallout(text: string): void {
-    // 取消任何未完成的节流渲染，直接写最终内容
+  private finalizeStreamingCallout(text: string, _hadStreamChunks: boolean): void {
+    // 取消节流渲染
     if (this.rafId !== null) {
       window.cancelAnimationFrame(this.rafId);
       this.rafId = null;
@@ -266,16 +261,22 @@ export class EditorInputBar {
     this.pendingText = null;
 
     if (!this.attachedView || this.streamingBodyLine < 0) return;
-    const editor = this.attachedView.editor;
 
+    // 如实写入最终内容（移除光标符）
+    this.writeBodyText(text);
+    this.streamingBodyLine = -1;
+    this.setStatus("完成");
+    this.updateSendButton(false);
+  }
+
+  /** 将文本写入 streaming body 区域（从 streamingBodyLine 到末尾） */
+  private writeBodyText(text: string): void {
+    if (!this.attachedView || this.streamingBodyLine < 0) return;
+    const editor = this.attachedView.editor;
     const currentLineCount = editor.lineCount();
     const startPos = { line: this.streamingBodyLine, ch: 0 };
     const endPos = { line: currentLineCount - 1, ch: editor.getLine(currentLineCount - 1).length };
     editor.replaceRange(text, startPos, endPos);
-
-    this.streamingBodyLine = -1;
-    this.setStatus("完成");
-    this.updateSendButton(false);
   }
 
   /**

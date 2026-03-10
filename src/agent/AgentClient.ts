@@ -29,8 +29,12 @@ export type AgentEventHandler = {
   onMessage?: (record: OutboxRecord, accumulated: string) => void;
   /** 第一个 stream chunk 到来前触发，用于插入消息 header */
   onStreamStart?: () => void;
-  /** streaming 结束，finalText 是完整内容 */
-  onStreamEnd?: (finalText: string) => void;
+  /**
+   * streaming 结束
+   * @param finalText 完整内容
+   * @param hadStreamChunks 是否收到过真实的 stream 分片（false 表示服务端一次性返回，需要客户端打字机效果）
+   */
+  onStreamEnd?: (finalText: string, hadStreamChunks: boolean) => void;
   /** tool use / thought / tool result 事件（来自 payload.data） */
   onToolUse?: (event: SessionExecutionEvent) => void;
   onError?: (error: Error) => void;
@@ -40,7 +44,8 @@ export class AgentClient {
   private requestId = 0;
   private cursor: string | undefined;
   private isProcessing = false;
-  private streamStarted = false; // 是否已插入 stream header
+  private streamStarted = false;    // 是否已插入 stream header
+  private hadStreamChunks = false;  // 是否收到过真实 stream 分片
   private pullTimeout: number | null = null;
   private accumulatedText = "";
   private handler: AgentEventHandler = {};
@@ -106,6 +111,7 @@ export class AgentClient {
 
     this.isProcessing = true;
     this.streamStarted = false;
+    this.hadStreamChunks = false;
     this.accumulatedText = "";
 
     try {
@@ -124,9 +130,18 @@ export class AgentClient {
     }
   }
 
+  private pullCount = 0;
+
   private startPullLoop(): void {
+    this.pullCount = 0;
+    const t0 = performance.now();
+    console.log("[AgentClient] ⏱ pull loop started");
+
     const pull = async (): Promise<void> => {
       if (!this.isProcessing) return;
+
+      const pullIdx = ++this.pullCount;
+      const tPull = performance.now();
 
       try {
         const params: ChannelPullParams = {
@@ -139,9 +154,32 @@ export class AgentClient {
         };
 
         const result: PullResult = await this.callRpc<PullResult>("channel.pull", params);
+        const tGot = performance.now();
+        const records = result.records ?? [];
 
-        if (result.records && result.records.length > 0) {
-          for (const record of result.records) {
+        console.log(
+          `[AgentClient] pull#${pullIdx} +${(tGot - t0).toFixed(0)}ms` +
+          ` (rtt=${( tGot - tPull).toFixed(0)}ms)` +
+          ` records=${records.length}` +
+          ` idle=${result.idle ?? false}`
+        );
+
+        if (records.length > 0) {
+          records.forEach((r, i) => {
+            const hasText = r.payload?.text !== undefined;
+            const streamInfo = r.stream
+              ? `stream={is_final:${r.stream.is_final}, seq:${(r.stream as Record<string,unknown>).seq ?? "?"}}`
+              : "stream=null";
+            const textLen = hasText ? `text.len=${(r.payload.text ?? "").length}` : "no-text";
+            const dataType = r.payload?.data
+              ? `data.type=${(r.payload.data as Record<string,unknown>).type}`
+              : "";
+            console.log(`  record[${i}]: ${streamInfo} ${textLen} ${dataType}`);
+          });
+        }
+
+        if (records.length > 0) {
+          for (const record of records) {
             // 处理 tool use 事件（从 payload.data 中提取）
             if (record.payload?.data && typeof record.payload.data === "object") {
               const data = record.payload.data as Record<string, unknown>;
@@ -158,34 +196,45 @@ export class AgentClient {
               const isNonStreaming = record.stream == null;
 
               if (isStreamChunk) {
-                // 首个 chunk 到来时才插入 header（时机更准确）
                 if (!this.streamStarted) {
                   this.streamStarted = true;
+                  console.log(`[AgentClient] onStreamStart at +${(performance.now()-t0).toFixed(0)}ms`);
                   this.handler.onStreamStart?.();
                 }
+                this.hadStreamChunks = true;
                 this.accumulatedText += record.payload.text;
                 this.handler.onMessage?.(record, this.accumulatedText);
               } else if (isFinalChunk) {
-                // streaming 的最后一个 delta
                 if (!this.streamStarted) {
                   this.streamStarted = true;
                   this.handler.onStreamStart?.();
                 }
                 const finalText = this.accumulatedText + (record.payload.text || "");
-                this.handler.onStreamEnd?.(finalText);
+                const hadChunks = this.hadStreamChunks;
+                console.log(
+                  `[AgentClient] onStreamEnd (isFinalChunk) at +${(performance.now()-t0).toFixed(0)}ms` +
+                  ` hadStreamChunks=${hadChunks} totalLen=${finalText.length}`
+                );
                 this.isProcessing = false;
                 this.streamStarted = false;
+                this.hadStreamChunks = false;
                 this.accumulatedText = "";
+                this.handler.onStreamEnd?.(finalText, hadChunks);
               } else if (isNonStreaming) {
-                // 非 streaming 的完整消息（一次性返回）
                 if (!this.streamStarted) {
                   this.streamStarted = true;
                   this.handler.onStreamStart?.();
                 }
-                this.handler.onStreamEnd?.(record.payload.text || "");
+                const text = record.payload.text || "";
+                console.log(
+                  `[AgentClient] onStreamEnd (isNonStreaming) at +${(performance.now()-t0).toFixed(0)}ms` +
+                  ` totalLen=${text.length}`
+                );
                 this.isProcessing = false;
                 this.streamStarted = false;
+                this.hadStreamChunks = false;
                 this.accumulatedText = "";
+                this.handler.onStreamEnd?.(text, false);
               }
             }
           }
@@ -215,6 +264,7 @@ export class AgentClient {
   stop(): void {
     this.isProcessing = false;
     this.streamStarted = false;
+    this.hadStreamChunks = false;
     this.accumulatedText = "";
     if (this.pullTimeout !== null) {
       clearTimeout(this.pullTimeout);
