@@ -3,7 +3,7 @@
 An Obsidian plugin that turns any markdown note into a first-class chat surface for a duoduo agent (Claude behind the scenes).  
 Conversations are stored directly in the current note as readable Markdown, with proper streaming and per-note isolation.
 
-> For a Chinese version of this document, see `README.zh-CN.md`.
+> For a Chinese version of this document, see [简体中文](README.zh-CN.md).
 
 ---
 
