@@ -1,4 +1,4 @@
-import { MarkdownView, Notice } from "obsidian";
+import { MarkdownView } from "obsidian";
 import type { OutboxRecord, SessionExecutionEvent } from "@openduo/protocol";
 import type { PluginSettings, ChatMessage } from "../types";
 import { AgentClient } from "../agent";
@@ -30,8 +30,9 @@ export class ChatController {
       },
       onStreamEnd: (finalText: string, _hadStreamChunks: boolean) => {
         this.adapter?.finalizeBody(finalText);
-        this.inputBar?.setStatus("完成");
+        this.inputBar?.setStatus("");
         this.inputBar?.setProcessing(false);
+        this.inputBar?.setConnectionStatus("connected");
       },
       onToolUse: (event: SessionExecutionEvent) => {
         const line = formatToolUse(event);
@@ -40,6 +41,7 @@ export class ChatController {
       onError: (error: Error) => {
         this.inputBar?.setStatus(`错误: ${error.message}`, "error");
         this.inputBar?.setProcessing(false);
+        this.inputBar?.setConnectionStatus("disconnected");
       },
     });
   }
@@ -50,7 +52,8 @@ export class ChatController {
   }
 
   /**
-   * 将输入栏附加到 Markdown 视图
+   * 将输入栏附加到 Markdown 视图。
+   * channel_id 和 consumer_id 从笔记文件路径自动派生，每个笔记独立会话。
    */
   attachToMarkdownView(view: MarkdownView): void {
     if (this.view === view && this.inputBar) return;
@@ -58,11 +61,23 @@ export class ChatController {
     this.detach();
     this.view = view;
 
+    const filePath = view.file?.path ?? "untitled";
+    // per-note session key：基础 sessionKey + 笔记路径
+    this.client.setSessionKeyForNote(filePath);
+    // channel_id / consumer_id 以笔记路径为唯一标识，实现每个笔记独立会话
+    const channelKey = `obsidian:${filePath}`;
+    this.client.setChannel(channelKey, `consumer:${channelKey}`);
+
     this.adapter = new EditorAdapter(view);
 
     this.inputBar = new EditorInputBar();
     this.inputBar.onSend = (text) => this.handleSend(text);
     this.inputBar.mount(view);
+
+    // 异步检测 daemon 连接状态，完成前显示 checking
+    this.client.checkHealth().then((ok) => {
+      this.inputBar?.setConnectionStatus(ok ? "connected" : "disconnected");
+    });
   }
 
   /**
@@ -92,12 +107,6 @@ export class ChatController {
   private async handleSend(text: string): Promise<void> {
     if (!this.view || !this.inputBar || !this.adapter) return;
     if (this.client.processing) return;
-
-    if (!this.settings.sessionKey) {
-      new Notice("请先在设置中配置 Session Key");
-      return;
-    }
-
     if (!this.view.file) return;
 
     this.inputBar.clearValue();
@@ -112,6 +121,7 @@ export class ChatController {
 
     this.inputBar.setStatus("处理中...", "processing");
     this.inputBar.setProcessing(true);
+    this.inputBar.setConnectionStatus("checking");
 
     try {
       await this.client.sendMessage(text);

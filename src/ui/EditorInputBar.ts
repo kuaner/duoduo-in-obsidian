@@ -2,6 +2,7 @@ import { setIcon } from "obsidian";
 import type { MarkdownView } from "obsidian";
 
 export type StatusType = "processing" | "error";
+export type ConnectionStatus = "connected" | "disconnected" | "checking";
 
 /**
  * 纯 UI 组件：渲染输入框、发送按钮、状态栏。
@@ -10,16 +11,14 @@ export type StatusType = "processing" | "error";
 export class EditorInputBar {
   private containerEl: HTMLElement | null = null;
   private inputEl: HTMLTextAreaElement | null = null;
-  private statusEl: HTMLElement | null = null;
+  private statusDotEl: HTMLElement | null = null;
+  private statusTextEl: HTMLElement | null = null;
   private sendBtn: HTMLButtonElement | null = null;
   private isComposing = false;
 
   /** 用户触发发送时调用，参数为输入框内容 */
   onSend: ((text: string) => void) | null = null;
 
-  /**
-   * 将输入栏渲染并挂载到指定 Markdown 视图底部
-   */
   mount(view: MarkdownView): void {
     this.destroy();
     this.containerEl = view.containerEl.createDiv({ cls: "agent-editor-input-bar" });
@@ -27,28 +26,45 @@ export class EditorInputBar {
     view.containerEl.appendChild(this.containerEl);
   }
 
-  /**
-   * 从 DOM 移除并清理
-   */
   destroy(): void {
     this.containerEl?.remove();
     this.containerEl = null;
     this.inputEl = null;
-    this.statusEl = null;
+    this.statusDotEl = null;
+    this.statusTextEl = null;
     this.sendBtn = null;
   }
 
+  /**
+   * 更新连接状态指示点
+   */
+  setConnectionStatus(status: ConnectionStatus): void {
+    if (!this.statusDotEl) return;
+    this.statusDotEl.className = `agent-status-dot ${status}`;
+    this.statusDotEl.ariaLabel = status === "connected"
+      ? "Daemon 已连接"
+      : status === "disconnected"
+      ? "Daemon 未连接"
+      : "连接检测中...";
+  }
+
+  /**
+   * 更新状态文字（idle 时传空字符串可隐藏文字）
+   */
   setStatus(text: string, type?: StatusType): void {
-    if (!this.statusEl) return;
-    this.statusEl.textContent = text;
-    this.statusEl.className = "agent-editor-status";
-    if (type) this.statusEl.addClass(type);
+    if (!this.statusTextEl) return;
+    this.statusTextEl.textContent = text;
+    this.statusTextEl.className = "agent-status-text";
+    if (type) this.statusTextEl.addClass(type);
   }
 
   setProcessing(processing: boolean): void {
     if (!this.sendBtn) return;
     this.sendBtn.disabled = processing;
     this.sendBtn.toggleClass("processing", processing);
+    if (this.statusDotEl) {
+      this.statusDotEl.toggleClass("processing", processing);
+    }
   }
 
   focus(): void {
@@ -116,8 +132,10 @@ export class EditorInputBar {
       }
     });
 
-    this.statusEl = this.containerEl.createDiv({ cls: "agent-editor-status" });
-    this.setStatus("就绪");
+    // 状态栏：左侧连接点 + 右侧状态文字
+    const statusBar = this.containerEl.createDiv({ cls: "agent-editor-status" });
+    this.statusDotEl = statusBar.createDiv({ cls: "agent-status-dot checking" });
+    this.statusTextEl = statusBar.createDiv({ cls: "agent-status-text" });
   }
 
   private triggerSend(): void {

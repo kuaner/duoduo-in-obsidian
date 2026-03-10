@@ -84,17 +84,61 @@
 }
 
 .agent-editor-status {
-  font-size: var(--font-ui-smaller);
-  color: var(--text-muted);
+  display: flex;
+  align-items: center;
+  gap: 6px;
   padding: var(--size-4-1) 0 0 0;
   min-height: 1.2em;
 }
 
-.agent-editor-status.processing {
+/* 连接状态指示点 */
+.agent-status-dot {
+  width: 7px;
+  height: 7px;
+  border-radius: 50%;
+  flex-shrink: 0;
+  background-color: var(--text-faint);
+  transition: background-color 0.3s ease;
+}
+
+.agent-status-dot.connected {
+  background-color: var(--color-green);
+}
+
+.agent-status-dot.disconnected {
+  background-color: var(--color-red);
+}
+
+.agent-status-dot.checking {
+  background-color: var(--text-faint);
+  animation: agent-dot-blink 1.2s ease-in-out infinite;
+}
+
+.agent-status-dot.processing {
+  background-color: var(--color-orange);
+  animation: agent-dot-pulse 0.8s ease-in-out infinite;
+}
+
+@keyframes agent-dot-blink {
+  0%, 100% { opacity: 1; }
+  50% { opacity: 0.3; }
+}
+
+@keyframes agent-dot-pulse {
+  0%, 100% { transform: scale(1); opacity: 1; }
+  50% { transform: scale(1.4); opacity: 0.7; }
+}
+
+.agent-status-text {
+  font-size: var(--font-ui-smaller);
+  color: var(--text-muted);
+}
+
+.agent-status-text.processing {
   color: var(--text-warning);
 }
 
-.agent-editor-status.error {
+.agent-status-text.error {
   color: var(--text-error);
 }
 

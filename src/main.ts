@@ -1,4 +1,4 @@
-import { Plugin, PluginSettingTab, App, Setting, Notice, MarkdownView, WorkspaceLeaf } from "obsidian";
+import { Plugin, PluginSettingTab, App, Setting, Notice, MarkdownView, WorkspaceLeaf, requestUrl } from "obsidian";
 import type { PluginSettings } from "./types";
 import { DEFAULT_PLUGIN_SETTINGS } from "./types";
 import { ChatController } from "./ui/ChatController";
@@ -131,19 +131,6 @@ class AgentChatSettingTab extends PluginSettingTab {
       );
 
     new Setting(containerEl)
-      .setName("Session Key")
-      .setDesc("Agent 会话密钥（必填）")
-      .addText((text) =>
-        text
-          .setPlaceholder("lark:oc_xxx:ou_xxx")
-          .setValue(this.plugin.settings.sessionKey)
-          .onChange(async (value) => {
-            this.plugin.settings.sessionKey = value;
-            await this.plugin.saveSettings();
-          })
-      );
-
-    new Setting(containerEl)
       .setName("Source Kind")
       .setDesc("来源类型标识符")
       .addText((text) =>
@@ -151,18 +138,6 @@ class AgentChatSettingTab extends PluginSettingTab {
           .setValue(this.plugin.settings.sourceKind)
           .onChange(async (value) => {
             this.plugin.settings.sourceKind = value;
-            await this.plugin.saveSettings();
-          })
-      );
-
-    new Setting(containerEl)
-      .setName("Channel ID")
-      .setDesc("频道标识符")
-      .addText((text) =>
-        text
-          .setValue(this.plugin.settings.channelId)
-          .onChange(async (value) => {
-            this.plugin.settings.channelId = value;
             await this.plugin.saveSettings();
           })
       );
@@ -220,7 +195,6 @@ class AgentChatSettingTab extends PluginSettingTab {
   private async checkConnection(container: HTMLElement): Promise<void> {
     container.setText("检查中...");
     try {
-      const { requestUrl } = await import("obsidian");
       const response = await requestUrl({
         url: `${this.plugin.settings.daemonUrl}/healthz`,
         method: "GET",
@@ -233,7 +207,7 @@ class AgentChatSettingTab extends PluginSettingTab {
         container.setText(`⚠️ Daemon 返回状态 ${response.status}`);
         container.className = "agent-connection-status warning";
       }
-    } catch (error) {
+    } catch {
       container.setText(`❌ 无法连接到 daemon (${this.plugin.settings.daemonUrl})`);
       container.className = "agent-connection-status error";
     }

@@ -1,4 +1,5 @@
 import { requestUrl } from "obsidian";
+import { createHash } from "crypto";
 import type {
   JsonRpcRequest,
   JsonRpcResponse,
@@ -44,13 +45,56 @@ export class AgentClient {
   private requestId = 0;
   private cursor: string | undefined;
   private isProcessing = false;
-  private streamStarted = false;    // 是否已插入 stream header
-  private hadStreamChunks = false;  // 是否收到过真实 stream 分片
+  private streamStarted = false;
+  private hadStreamChunks = false;
   private pullTimeout: number | null = null;
   private accumulatedText = "";
   private handler: AgentEventHandler = {};
+  // 当前活跃的 channel，由外部在 attach 时注入
+  private channelId = "obsidian-default";
+  private consumerId = "obsidian-consumer-default";
+  // 当前实际使用的 per-note session key
+  private sessionKey: string;
 
-  constructor(private settings: AgentSettings) {}
+  constructor(private settings: AgentSettings) {
+    this.sessionKey = "";
+  }
+
+  /**
+   * 基于 noteId 的 MD5 构造 per-note session_key，实现每个笔记独立会话。
+   * 例如 noteId 为 Agent Chats/foo.md，则最终 session_key = obsidian:md5{noteId}。
+   */
+  setSessionKeyForNote(noteId: string | null): void {
+    const raw = noteId && noteId.length > 0 ? noteId : "untitled";
+    const md5 = createHash("md5").update(raw).digest("hex");
+    this.sessionKey = `obsidian:md5${md5}`;
+  }
+
+  /**
+   * 设置当前会话绑定的 channel（每个笔记独立）
+   */
+  setChannel(channelId: string, consumerId: string): void {
+    this.channelId = channelId;
+    this.consumerId = consumerId;
+    // 切换 channel 时重置游标，从新 channel 的头部开始消费
+    this.cursor = undefined;
+  }
+
+  /**
+   * 检查 daemon 是否可达
+   */
+  async checkHealth(): Promise<boolean> {
+    try {
+      const response = await requestUrl({
+        url: `${this.settings.daemonUrl}/healthz`,
+        method: "GET",
+        throw: false,
+      });
+      return response.status === 200;
+    } catch {
+      return false;
+    }
+  }
 
   updateSettings(settings: AgentSettings): void {
     this.settings = settings;
@@ -105,7 +149,7 @@ export class AgentClient {
   }
 
   async sendMessage(text: string): Promise<void> {
-    if (this.isProcessing || !this.settings.sessionKey) {
+    if (this.isProcessing || !this.sessionKey) {
       return;
     }
 
@@ -116,10 +160,10 @@ export class AgentClient {
 
     try {
       const params: ChannelIngressParams = {
-        session_key: this.settings.sessionKey,
+        session_key: this.sessionKey,
         text,
         source_kind: this.settings.sourceKind,
-        channel_id: this.settings.channelId,
+        channel_id: this.channelId,
       };
 
       await this.callRpc("channel.ingress", params);
@@ -136,8 +180,8 @@ export class AgentClient {
 
       try {
         const params: ChannelPullParams = {
-          session_key: this.settings.sessionKey,
-          consumer_id: this.settings.consumerId,
+          session_key: this.sessionKey,
+          consumer_id: this.consumerId,
           cursor: this.cursor,
           return_mask: ["final", "stream", "tool"],
           wait_ms: this.settings.pullWaitMs,
@@ -203,8 +247,8 @@ export class AgentClient {
         if (result.next_cursor) {
           this.cursor = result.next_cursor;
           await this.callRpc("channel.ack", {
-            session_key: this.settings.sessionKey,
-            consumer_id: this.settings.consumerId,
+            session_key: this.sessionKey,
+            consumer_id: this.consumerId,
             cursor: result.next_cursor,
           } as ChannelAckParams);
         }
